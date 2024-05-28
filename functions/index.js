@@ -194,7 +194,7 @@ exports.getUserPosts = onRequest({
       }
     });
 
-    res.json({results: filteredData});
+    res.json(filteredData);
   });
 });
 
@@ -218,11 +218,23 @@ exports.getUsers = onRequest({
     const allUsers = db.collection("all_users")
         .doc(type).collection("users");
 
+    const allReviews = db.collection("all_reviews")
+        .doc("allReviews")
+        .collection("reviewList");
+
+
     const userRef = await users.where("userEmail", "==", userEmail).get();
     const usersRef = await allUsers.get();
+    const reviewsRef = await allReviews.get();
 
     const usersArr = [];
     const userData = [];
+    const reviewsArr = [];
+
+    // Iterate over reviewsRef to get review data.
+    reviewsRef.forEach((doc) => {
+      reviewsArr.push(doc.data());
+    });
 
     // Iterate over userRef to get user data.
     userRef.forEach((doc) => {
@@ -231,6 +243,40 @@ exports.getUsers = onRequest({
 
     const userTags = userData[0].userTags || userData[0].userTag || [];
     const tags = JSON.stringify(userTags);
+
+    const getAverageRatings = (reviewsArr) => {
+      const userRatings = {};
+
+      reviewsArr.forEach((review) => {
+        // eslint-disable-next-line max-len
+        const email = review.revieweeEmail;
+
+        if (!userRatings[email]) {
+          userRatings[email] = {
+            totalRating: 0,
+            count: 0,
+          };
+        }
+
+        userRatings[email].totalRating += review.userRating;
+        userRatings[email].count += 1;
+      });
+
+      const averageRatings = [];
+
+      // eslint-disable-next-line guard-for-in
+      for (const email in userRatings) {
+        const {totalRating, count} = userRatings[email];
+        averageRatings.push({email, averageRating: totalRating / count});
+      }
+
+      return averageRatings;
+    };
+
+    const ratingsArr = getAverageRatings(reviewsArr);
+    // eslint-disable-next-line max-len
+    const ratingMap = new Map(ratingsArr.map((item) => [item.email, item.averageRating]));
+
 
     // Iterate over postsRef to get all user posts based on type.
     usersRef.forEach((doc) => {
@@ -252,6 +298,17 @@ exports.getUsers = onRequest({
 
     console.log(`User tags: ` + tags);
     console.log(`All tags: ` + allUserTags);
+
+    usersArr.forEach((user) => {
+      const email = user.userEmail;
+      const rating = email ? ratingMap.get(email) : NaN;
+
+      if (rating !== undefined && !isNaN(rating)) {
+        user.userRating = rating;
+      } else {
+        user.userRating = 0;
+      }
+    });
 
     // Get new order of tags based on relevance
     const customOrder = await getRelevance(tags, allUserTags);
@@ -296,6 +353,10 @@ exports.getUsers = onRequest({
         return item.userFirstname.toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "lastName" && query) {
         return item.userLastname.toLowerCase().startsWith(query.toLowerCase());
+      } else if (queryType === "about" && query) {
+        console.log(item.userAbout);
+        // eslint-disable-next-line max-len
+        return (item.userabout || item.userAbout).toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "price" && query) {
         // Ensure the query value is at least the userSessionPrice
         // eslint-disable-next-line max-len
@@ -306,7 +367,7 @@ exports.getUsers = onRequest({
       }
     });
 
-    res.json({results: filteredData});
+    res.json(filteredData);
   });
 });
 

@@ -14,7 +14,7 @@ const {onRequest} = require("firebase-functions/v2/https");
 
 // The Firebase Admin SDK to access Firestore.
 const {initializeApp} = require("firebase-admin/app");
-const {getFirestore} = require("firebase-admin/firestore");
+const {getFirestore, Filter} = require("firebase-admin/firestore");
 const {
   GoogleGenerativeAI,
   HarmCategory,
@@ -205,6 +205,7 @@ exports.getUsers = onRequest({
   cors(req, res, async () => {
     const userType = req.query.userType;
     const userEmail = req.query.email;
+    const centerId = req.query.centerId;
     const query = req.query.query;
     const queryType = req.query.queryType;
 
@@ -222,9 +223,11 @@ exports.getUsers = onRequest({
         .doc("allReviews")
         .collection("reviewList");
 
-
     const userRef = await users.where("userEmail", "==", userEmail).get();
-    const usersRef = await allUsers.get();
+    const usersRef = centerId ? await allUsers.where(Filter.or(
+        Filter.where("userTutoringcenter", "==", centerId),
+        Filter.where("userTutoringCenter", "==", centerId),
+    )).get() : await allUsers.get();
     const reviewsRef = await allReviews.get();
 
     const usersArr = [];
@@ -284,6 +287,10 @@ exports.getUsers = onRequest({
       usersArr.push(doc.data());
     });
 
+    if (usersArr.length === 0) {
+      return res.json(usersArr);
+    }
+
     // Get all unique tags
     // eslint-disable-next-line max-len
     const allUserTags = Array.from(new Set(usersArr.reduce((acc, item) => {
@@ -295,6 +302,7 @@ exports.getUsers = onRequest({
       }
       return acc;
     }, [])));
+
 
     console.log(`User tags: ` + tags);
     console.log(`All tags: ` + allUserTags);
@@ -344,6 +352,12 @@ exports.getUsers = onRequest({
       return getRank(tagsA) - getRank(tagsB);
     });
 
+    const allCenters = db.collection("all_users")
+        .doc("tutor_center").collection("users");
+
+    // eslint-disable-next-line max-len
+    const centersRef = await allCenters.get();
+
 
     const filteredData = orderedData.filter((item) => {
       if (queryType === "topic" && query) {
@@ -354,13 +368,202 @@ exports.getUsers = onRequest({
       } else if (queryType === "lastName" && query) {
         return item.userLastname.toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "about" && query) {
-        console.log(item.userAbout);
         // eslint-disable-next-line max-len
         return (item.userabout || item.userAbout).toLowerCase().startsWith(query.toLowerCase());
+      } else if (queryType === "tutorCenter" && query) {
+        const centersArr = [];
+
+        // Iterate over centersRef to get centers data.
+        centersRef.forEach((doc) => {
+          centersArr.push(doc.data());
+        });
+
+        const matchingCenter = centersArr.filter((item) => {
+          return item.name.toLowerCase().startsWith(query.toLowerCase());
+        });
+
+        const centerIds = [];
+        matchingCenter.forEach((center) => {
+          centerIds.push(center.uuid);
+        });
+
+        // eslint-disable-next-line max-len
+        return centerIds.includes(item.userTutoringCenter || item.userTutoringcenter);
       } else if (queryType === "price" && query) {
         // Ensure the query value is at least the userSessionPrice
         // eslint-disable-next-line max-len
         return item.userSessionPrice && parseFloat(item.userSessionPrice) <= parseFloat(query);
+      } else {
+        // No filter applied, return all items
+        return true;
+      }
+    });
+
+    res.json(filteredData);
+  });
+});
+
+exports.getCenters = onRequest({
+  region: "asia-southeast1",
+}, async (req, res) => {
+  // Grab the user type and email from the request
+  cors(req, res, async () => {
+    const query = req.query.query;
+    const queryType = req.query.queryType;
+
+    const db = getFirestore();
+
+    const allTutors = db.collection("all_users")
+        .doc("tutor").collection("users");
+
+    const allReviews = db.collection("all_reviews")
+        .doc("allReviews")
+        .collection("reviewList");
+
+    const tutorsRef = await allTutors.get();
+    const reviewsRef = await allReviews.get();
+
+    const tutorsArr = [];
+    const reviewsArr = [];
+
+    // Iterate over reviewsRef to get reviews data.
+    reviewsRef.forEach((doc) => {
+      reviewsArr.push(doc.data());
+    });
+
+    // Iterate over tutorsRef to get all tutors data.
+    tutorsRef.forEach((doc) => {
+      tutorsArr.push(doc.data());
+    });
+
+    const getAverageRatings = (reviewsArr) => {
+      const userRatings = {};
+
+      reviewsArr.forEach((review) => {
+        // eslint-disable-next-line max-len
+        const email = review.revieweeEmail;
+
+        if (!userRatings[email]) {
+          userRatings[email] = {
+            totalRating: 0,
+            count: 0,
+          };
+        }
+
+        userRatings[email].totalRating += review.userRating;
+        userRatings[email].count += 1;
+      });
+
+      const averageRatings = [];
+
+      // eslint-disable-next-line guard-for-in
+      for (const email in userRatings) {
+        const {totalRating, count} = userRatings[email];
+        averageRatings.push({email, averageRating: totalRating / count});
+      }
+
+      return averageRatings;
+    };
+
+    const ratingsArr = getAverageRatings(reviewsArr);
+    // eslint-disable-next-line max-len
+    const ratingMap = new Map(ratingsArr.map((item) => [item.email, item.averageRating]));
+
+    tutorsArr.forEach((user) => {
+      const email = user.userEmail;
+      const rating = email ? ratingMap.get(email) : NaN;
+
+      if (rating !== undefined && !isNaN(rating)) {
+        user.userRating = rating;
+      } else {
+        user.userRating = 0;
+      }
+    });
+
+    console.log(tutorsArr);
+
+    const getCenterAverageRatings = (tutorsArr) => {
+      const centerRatings = {};
+
+      tutorsArr.forEach((tutor) => {
+        // eslint-disable-next-line max-len
+        const uuid = tutor.userTutoringcenter || tutor.userTutoringCenter;
+
+        if (!centerRatings[uuid]) {
+          centerRatings[uuid] = {
+            totalRating: 0,
+            count: 0,
+            tutorsCount: 0,
+          };
+        }
+
+        centerRatings[uuid].totalRating += tutor.userRating;
+        if (tutor.userRating > 0) {
+          centerRatings[uuid].count += 1;
+        }
+        centerRatings[uuid].tutorsCount += 1;
+      });
+
+      const averageRatings = [];
+
+      // eslint-disable-next-line guard-for-in
+      for (const uuid in centerRatings) {
+        const {totalRating, count, tutorsCount} = centerRatings[uuid];
+        // eslint-disable-next-line max-len
+        averageRatings.push({uuid, averageRating: totalRating / count, tutorsCount});
+      }
+
+      return averageRatings;
+    };
+
+    const centersRatingsArr = getCenterAverageRatings(tutorsArr);
+    console.log(ratingsArr);
+    console.log(centersRatingsArr);
+
+    const allCenters = db.collection("all_users")
+        .doc("tutor_center").collection("users");
+
+    // eslint-disable-next-line max-len
+    const centersRef = await allCenters.get();
+
+    const centersArr = [];
+
+    // Iterate over centersRef to get centers data.
+    centersRef.forEach((doc) => {
+      centersArr.push(doc.data());
+    });
+
+    // eslint-disable-next-line max-len
+    const centersRatingMap = new Map(centersRatingsArr.map((item) => [item.uuid, item.averageRating]));
+    // eslint-disable-next-line max-len
+    const centersCountMap = new Map(centersRatingsArr.map((item) => [item.uuid, item.tutorsCount]));
+
+    centersArr.forEach((center) => {
+      const uuid = center.uuid;
+      const rating = uuid ? centersRatingMap.get(uuid) : NaN;
+      const count = uuid ? centersCountMap.get(uuid) : NaN;
+
+      if (rating !== undefined && !isNaN(rating)) {
+        center.overallRating = rating;
+      } else {
+        center.overallRating = 0;
+      }
+
+      if (count !== undefined && !isNaN(count)) {
+        center.numberOfTutors = count;
+      } else {
+        center.numberOfTutors = 0;
+      }
+    });
+
+    const filteredData = centersArr.filter((item) => {
+      if (queryType === "name" && query) {
+        // eslint-disable-next-line max-len
+        return item.name.toLowerCase().startsWith(query.toLowerCase());
+      } else if (queryType === "rating" && query) {
+        // Ensure the query value is at least the userSessionPrice
+        // eslint-disable-next-line max-len
+        return item.overallRating && parseFloat(item.overallRating) >= parseFloat(query);
       } else {
         // No filter applied, return all items
         return true;

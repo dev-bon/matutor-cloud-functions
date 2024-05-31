@@ -15,6 +15,7 @@ const {onRequest} = require("firebase-functions/v2/https");
 // The Firebase Admin SDK to access Firestore.
 const {initializeApp} = require("firebase-admin/app");
 const {getFirestore, Filter} = require("firebase-admin/firestore");
+const {getMessaging} = require("firebase-admin/messaging");
 const {
   GoogleGenerativeAI,
   HarmCategory,
@@ -217,7 +218,7 @@ exports.getUsers = onRequest({
         .doc(userType).collection("users");
 
     const allUsers = db.collection("all_users")
-        .doc(type).collection("users");
+        .doc(centerId ? "tutor" : type).collection("users");
 
     const allReviews = db.collection("all_reviews")
         .doc("allReviews")
@@ -603,3 +604,52 @@ exports.sendEmail = onRequest({
   });
 });
 
+exports.sendNotif = onRequest({
+  region: "asia-southeast1",
+}, async (req, res) => {
+  cors(req, res, async () => {
+    const {email, userType, title, body} = req.body;
+
+    if (!email | !userType | !title | !body) {
+      return res.status(400).send("Missing required fields");
+    }
+
+    const db = getFirestore();
+
+    const users = db.collection("all_users")
+        .doc(userType).collection("users");
+
+    const userRef = await users.where("userEmail", "==", email).get();
+
+    const userData = [];
+
+    // Iterate over userRef to get user data.
+    userRef.forEach((doc) => {
+      userData.push(doc.data());
+    });
+
+    const userToken = userData[0].fcmToken;
+
+    if (!userToken) {
+      return res.status(500).send("No token for user");
+    }
+
+    const message = {
+      notification: {
+        body: body,
+        title: title,
+      },
+      token: userToken,
+    };
+
+    getMessaging().send(message)
+        .then((response) => {
+        // Response is a message ID string.
+          console.log("Successfully sent message:", response);
+          return res.status(200).send("Successfully sent message: " + response);
+        })
+        .catch((error) => {
+          return res.status(500).send(error.toString());
+        });
+  });
+});

@@ -1,3 +1,4 @@
+/* eslint-disable max-len */
 /**
  * Import function triggers from their respective submodules:
  *
@@ -41,7 +42,7 @@ const getRelevance = async (tags, allPostTags) => {
   // Initialize Gemini AI Model
   const model = genAI.getGenerativeModel({
     model: "gemini-1.5-flash-latest",
-    // eslint-disable-next-line max-len
+
     systemInstruction: `You will be provided with a JSON array of tags, and your task is to sort the JSON Array according to the relevance of the tag in this JSON array: ` + tags,
   });
 
@@ -123,6 +124,26 @@ exports.getUserPosts = onRequest({
       userPosts.push(doc.data());
     });
 
+    // Bubble sort function based on the maximum tag rank
+    const bubbleSort = (array) => {
+      const n = array.length;
+      let swapped;
+      do {
+        swapped = false;
+        for (let i = 0; i < n - 1; i++) {
+          const maxRankA = getMaxTagRank(array[i].postTags);
+          const maxRankB = getMaxTagRank(array[i + 1].postTags);
+          if (maxRankA > maxRankB) {
+            const temp = array[i];
+            array[i] = array[i + 1];
+            array[i + 1] = temp;
+            swapped = true;
+          }
+        }
+      } while (swapped);
+      return array;
+    };
+
     // Get all unique tags
     const allPostTags = Array.from(new Set(userPosts.reduce((acc, item) => {
       return acc.concat(item.postTags.map((tag) => tag.toLowerCase()));
@@ -138,18 +159,22 @@ exports.getUserPosts = onRequest({
 
     console.log(`Custom Order: ` + relevantTags);
 
-    // Function to get the rank of the tag based on the order of relevance
-    const getRank = (tags) => {
-      for (let i = 0; i < relevantTags.length; i++) {
-        if (tags.some((tag) => tag.toLowerCase() === relevantTags[i])) {
-          return i;
-        }
-      }
-      return relevantTags.length; // If no tags match, place at the end
+    // Function to get the rank of a single tag
+    const getTagRank = (tag) => {
+      const index = relevantTags.findIndex((relevantTag) => relevantTag.toLowerCase() === tag.toLowerCase());
+      return index !== -1 ? index : relevantTags.length; // If tag not found, place at the end
     };
 
-    // eslint-disable-next-line max-len
-    const orderedData = userPosts.sort((a, b) => getRank(a.postTags) - getRank(b.postTags));
+    // Function to get the maximum rank of all tags in a post
+    const getMaxTagRank = (postTags) => {
+      return postTags.reduce((maxRank, tag) => {
+        const rank = getTagRank(tag);
+        return rank > maxRank ? rank : maxRank;
+      }, -1);
+    };
+
+    // Sort the user posts using bubble sort based on the maximum rank of their individual tags
+    const orderedData = bubbleSort(userPosts);
 
     const isValidDate = (dateStr) => {
       const regex = /^\d{1,2}-\d{1,2}-\d{4}$/;
@@ -164,12 +189,10 @@ exports.getUserPosts = onRequest({
 
     const filteredData = orderedData.filter((item) => {
       if (queryType === "topic" && query) {
-        // eslint-disable-next-line max-len
         return item.postTags.some((tag) => tag.toLowerCase().startsWith(query.toLowerCase()));
       } else if (queryType === "title" && query) {
         return item.postTitle.toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "description" && query) {
-        // eslint-disable-next-line max-len
         return item.postDescription.toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "date" && query) {
         if (!isValidDate(query)) {
@@ -179,13 +202,13 @@ exports.getUserPosts = onRequest({
         const [month, day, year] = query.split("-").map(Number);
         const searchDate = new Date(Date.UTC(year, month - 1, day));
         const searchDateUTCPlus8 = toUTCPlus8(searchDate);
-        // eslint-disable-next-line max-len
+
         searchDateUTCPlus8.setHours(0, 0, 0, 0); // Set to the start of the day in UTC+8
 
-        // eslint-disable-next-line max-len
+
         const itemDate = new Date(item.datePosted._seconds * 1000 + item.datePosted._nanoseconds / 1000000);
         const itemDateUTCPlus8 = toUTCPlus8(itemDate);
-        // eslint-disable-next-line max-len
+
         itemDateUTCPlus8.setHours(0, 0, 0, 0); // Set to the start of the day in UTC+8
 
         return itemDateUTCPlus8.getTime() === searchDateUTCPlus8.getTime();
@@ -252,7 +275,6 @@ exports.getUsers = onRequest({
       const userRatings = {};
 
       reviewsArr.forEach((review) => {
-        // eslint-disable-next-line max-len
         const email = review.revieweeEmail;
 
         if (!userRatings[email]) {
@@ -278,11 +300,11 @@ exports.getUsers = onRequest({
     };
 
     const ratingsArr = getAverageRatings(reviewsArr);
-    // eslint-disable-next-line max-len
+
     const ratingMap = new Map(ratingsArr.map((item) => [item.email, item.averageRating]));
 
 
-    // Iterate over postsRef to get all user posts based on type.
+    // Iterate over usersRef to get all users based on type.
     usersRef.forEach((doc) => {
       console.log(doc.id, "=>", doc.data());
       usersArr.push(doc.data());
@@ -292,8 +314,46 @@ exports.getUsers = onRequest({
       return res.json(usersArr);
     }
 
+    // Function to get the rank of a single tag
+    const getTagRank = (tag) => {
+      const index = relevantTags.findIndex((relevantTag) => relevantTag.toLowerCase() === tag.toLowerCase());
+      return index !== -1 ? index : relevantTags.length; // If tag not found, place at the end
+    };
+
+    // Function to get the maximum rank of all tags in a user
+    const getMaxTagRank = (userTags) => {
+      if (!userTags || userTags.length === 0) {
+        return relevantTags.length; // If user has no tags, assign the highest rank value to place at the end
+      }
+      return userTags.reduce((maxRank, tag) => {
+        const rank = getTagRank(tag);
+        return rank > maxRank ? rank : maxRank;
+      }, -1);
+    };
+
+    // Bubble sort function based on the maximum tag rank
+    const bubbleSort = (array) => {
+      const n = array.length;
+      let swapped;
+      do {
+        swapped = false;
+        for (let i = 0; i < n - 1; i++) {
+          const tagsA = array[i].userTags || array[i].userTag || [];
+          const tagsB = array[i + 1].userTags || array[i + 1].userTag || [];
+          const maxRankA = getMaxTagRank(tagsA);
+          const maxRankB = getMaxTagRank(tagsB);
+          if (maxRankA > maxRankB) {
+            const temp = array[i];
+            array[i] = array[i + 1];
+            array[i + 1] = temp;
+            swapped = true;
+          }
+        }
+      } while (swapped);
+      return array;
+    };
+
     // Get all unique tags
-    // eslint-disable-next-line max-len
     const allUserTags = Array.from(new Set(usersArr.reduce((acc, item) => {
       if (item.userTags) {
         acc = acc.concat(item.userTags.map((tag) => tag.toLowerCase()));
@@ -327,49 +387,21 @@ exports.getUsers = onRequest({
 
     console.log(`Custom Order: ` + relevantTags);
 
-    // Function to get the rank of the tag based on the order of relevance
-    const getRank = (tags) => {
-      // Ensure tags is defined and is an array
-      if (!Array.isArray(tags)) {
-        return relevantTags.length; // If tags is not an array, place at the end
-      }
-
-      for (let i = 0; i < relevantTags.length; i++) {
-        if (tags.some((tag) => tag.toLowerCase() === relevantTags[i])) {
-          return i;
-        }
-      }
-
-      return relevantTags.length; // If no tags match, place at the end
-    };
-
-    // eslint-disable-next-line max-len
-    const orderedData = usersArr.sort((a, b) => {
-      // Get the tags for user a and user b
-      const tagsA = a.userTags || a.userTag || [];
-      const tagsB = b.userTags || b.userTag || [];
-
-      // Use getRank to compare the tags
-      return getRank(tagsA) - getRank(tagsB);
-    });
+    const orderedData = bubbleSort(usersArr);
 
     const allCenters = db.collection("all_users")
         .doc("tutor_center").collection("users");
 
-    // eslint-disable-next-line max-len
     const centersRef = await allCenters.get();
-
 
     const filteredData = orderedData.filter((item) => {
       if (queryType === "topic" && query) {
-        // eslint-disable-next-line max-len
         return (item.userTags || item.userTag || []).some((tag) => tag.toLowerCase().startsWith(query.toLowerCase()));
       } else if (queryType === "firstName" && query) {
         return item.userFirstname.toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "lastName" && query) {
         return item.userLastname.toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "about" && query) {
-        // eslint-disable-next-line max-len
         return (item.userabout || item.userAbout).toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "tutorCenter" && query) {
         const centersArr = [];
@@ -388,11 +420,11 @@ exports.getUsers = onRequest({
           centerIds.push(center.uuid);
         });
 
-        // eslint-disable-next-line max-len
+
         return centerIds.includes(item.userTutoringCenter || item.userTutoringcenter);
       } else if (queryType === "price" && query) {
         // Ensure the query value is at least the userSessionPrice
-        // eslint-disable-next-line max-len
+
         return item.userSessionPrice && parseFloat(item.userSessionPrice) <= parseFloat(query);
       } else {
         // No filter applied, return all items
@@ -441,7 +473,6 @@ exports.getCenters = onRequest({
       const userRatings = {};
 
       reviewsArr.forEach((review) => {
-        // eslint-disable-next-line max-len
         const email = review.revieweeEmail;
 
         if (!userRatings[email]) {
@@ -467,7 +498,7 @@ exports.getCenters = onRequest({
     };
 
     const ratingsArr = getAverageRatings(reviewsArr);
-    // eslint-disable-next-line max-len
+
     const ratingMap = new Map(ratingsArr.map((item) => [item.email, item.averageRating]));
 
     tutorsArr.forEach((user) => {
@@ -487,7 +518,6 @@ exports.getCenters = onRequest({
       const centerRatings = {};
 
       tutorsArr.forEach((tutor) => {
-        // eslint-disable-next-line max-len
         const uuid = tutor.userTutoringcenter || tutor.userTutoringCenter;
 
         if (!centerRatings[uuid]) {
@@ -510,7 +540,7 @@ exports.getCenters = onRequest({
       // eslint-disable-next-line guard-for-in
       for (const uuid in centerRatings) {
         const {totalRating, count, tutorsCount} = centerRatings[uuid];
-        // eslint-disable-next-line max-len
+
         averageRatings.push({uuid, averageRating: totalRating / count, tutorsCount});
       }
 
@@ -524,7 +554,7 @@ exports.getCenters = onRequest({
     const allCenters = db.collection("all_users")
         .doc("tutor_center").collection("users");
 
-    // eslint-disable-next-line max-len
+
     const centersRef = await allCenters.get();
 
     const centersArr = [];
@@ -534,9 +564,9 @@ exports.getCenters = onRequest({
       centersArr.push(doc.data());
     });
 
-    // eslint-disable-next-line max-len
+
     const centersRatingMap = new Map(centersRatingsArr.map((item) => [item.uuid, item.averageRating]));
-    // eslint-disable-next-line max-len
+
     const centersCountMap = new Map(centersRatingsArr.map((item) => [item.uuid, item.tutorsCount]));
 
     centersArr.forEach((center) => {
@@ -559,11 +589,10 @@ exports.getCenters = onRequest({
 
     const filteredData = centersArr.filter((item) => {
       if (queryType === "name" && query) {
-        // eslint-disable-next-line max-len
         return item.name.toLowerCase().startsWith(query.toLowerCase());
       } else if (queryType === "rating" && query) {
         // Ensure the query value is at least the userSessionPrice
-        // eslint-disable-next-line max-len
+
         return item.overallRating && parseFloat(item.overallRating) >= parseFloat(query);
       } else {
         // No filter applied, return all items
